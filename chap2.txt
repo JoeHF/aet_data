@@ -1,0 +1,149 @@
+% Documentation for pkuthss.
+%
+% Copyright (c) 2008-2009 solvethis
+% Copyright (c) 2010-2015 Casper Ti. Vector
+%
+% This work may be distributed and/or modified under the conditions of the
+% LaTeX Project Public License, either version 1.3 of this license or (at
+% your option) any later version.
+% The latest version of this license is in
+%   https://www.latex-project.org/lppl.txt
+% and version 1.3 or later is part of all distributions of LaTeX version
+% 2005/12/01 or later.
+%
+% This work has the LPPL maintenance status `maintained'.
+% The current maintainer of this work is Casper Ti. Vector.
+%
+% This work consists of the following files:
+%   pkuthss.tex
+%   chap/pkuthss-copyright.tex
+%   chap/pkuthss-abstract.tex
+%   chap/pkuthss-introduction.tex
+%   chap/pkuthss-chap1.tex
+%   chap/pkuthss-chap2.tex
+%   chap/pkuthss-chap3.tex
+%   chap/pkuthss-conclusion.tex
+%   chap/pkuthss-encl1.tex
+%   chap/pkuthss-acknowledge.tex
+
+\chapter{相关工作}
+失效率曲线(MRC)是衡量缓存大小和性能之间的一个重要的工具，它刻画了不同缓存大小下所对应的失效率，通过MRC，我们可以重新定义工作集大小，即在不显著影响应用程序性能条件下所需要的缓存大小。 
+
+\begin{figure}[htbp!]
+    \centering
+    \includegraphics[width=0.5\textwidth]{img/mrc.png}
+    \caption{MRC示例图}\label{fig:mrc}
+\end{figure}
+
+如图\ref{fig:mrc}所示，当缓存大小为0的时候，失效率为100\%，即所有的访问在缓存中均会失效，随着缓存大小的增大，失效率将会逐渐降低，这是由程序的局部性决定的，这里的局部性主要指的是时间局部性(如果一个信息项正在被访问，那么在近期它很可能还会再次被访问)。有了MRC，我们可以定义工作集大小为失效率为M时的缓存大小，M是应用程序所能容忍的失效率。
+
+在本章中，我们将会讨论计算MRC的经典算法，以及围绕这个经典算法做出的优化，阐述如何利用MRC去预测分级存储器体系结构下各级缓存的大小，最后详细介绍AET模型的原理以及分析一下AET算法的时间和空间开销。
+
+\section{失效率曲线}
+\subsection{MRC算法}
+传统的计算MRC的算法是LRU栈算法\supercite{Mattson1970Evaluation},当我们得到一个访存序列的时候，顺序扫描这个序列，在LRU栈里面查找当前访问的地址所处的栈的深度，这个深度即是这个访问的重用距离，并在对应的重用距离直方图加一，完成这个操作之后将这个访问地址移动到LRU栈的头部表明这个访问地址是最近被访问到的，扫描完整个序列之后我们就得到了重用距离分布图。
+
+\begin{table}[!htbp]
+\caption{LRU栈算法示例}\label{tab:LRU-Stack}
+\centering
+\begin{tabular}{ccccccccc}
+\midrule
+访问序列 & a & b & a & c & b & b & c & a\\
+栈深度 & $\infty$ & $\infty$ & 1 & $\infty$ & 2 & 0 & 1 & 2\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!htbp]
+\caption{LRU栈算法示例}\label{tab:LRU-Stack2}
+\centering
+\begin{tabular}{cccccc}
+\midrule
+重用距离 d & 0 & 1 & 2 & 3 & $\geq4$ \\
+频率 $f_d$ & $\frac{1}{8}$ & $\frac{2}{8}$ & $\frac{2}{8}$ & 0 & $\frac{3}{8}$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+表\ref{tab:LRU-Stack}是LRU栈算法的示例，每一次访问都会引起栈中元素的移动，最近的访问会被放在栈的头部，其余元素依次向栈的尾部移动。如果这个访问地址在栈中出现过，则获得它在栈里的深度，并将这个访问地址从原来位置移动到栈的头部。初始时候栈为空，所以第一次访问时这个地址的栈深度可以理解为无穷大，当一个访问地址被再次访问时这就叫做重用，重用距离即是该地址在栈里的深度。如果将一个地址的第一次使用也看作重用，那么这次的重用距离也就理解为无穷大。于是在扫描完一次访问序列之后我们就得到了如表\ref{tab:LRU-Stack2}所示的重用距离分布表。通过表\ref{tab:LRU-Stack2}，我们能够得到失效率曲线的计算公式，对于给定缓存大小d，对应的缓存失效率$MRC_d$为：
+
+\begin{equation}
+MRC_d = \sum_{i=d}^\infty f_i
+\end{equation}
+
+LRU栈算法的时间开销不难分析，每一次的访问都首先要在栈里查找这个地址是否使用过，查询开销为$O(n)$，如果没有找到则添加这个访问地址到栈的头部，找到则将这个访问地址从链表的当前位置移动到链表的头部，这两种情况的开销都是$O(1)$，用数组保存重用距离分布表，那么每次更新重用距离分布表的开销也是$O(1)$，空间开销包括保存栈的链表以及重用距离分布表，其大小均和访问的不同地址数目相关，假设访问的不同地址总和为M，空间开销则是$O(M)$。
+
+虽然LRU算法是最为经典的MRC计算方法，但是其算法的时间复杂度和空间复杂度都较高，所以近来有很多的研究在MRC的精确度和开销上做了一些平衡，试图以较低的开销得到近似精确的MRC。
+
+\begin{table}[!htbp]
+\centering
+\caption{Counter Stack示例}\label{tab:Counter-Stack}
+\begin{tabular}{cccccc}
+( & a, & b, & c, &a & ) \\
+\hline
+  & 1  & 2  & 3  &3 &   \\
+  &    & 1  & 2  &3 &   \\
+  &    &    & 1  &2 &   \\
+  &    &    &    &1 &   \\
+\end{tabular}
+\end{table}
+
+Counter Stack\supercite{wires2014characterizing}创造了一个新颖的矩阵，给定一个访存序列(a,b,c,a)，能够得到表\ref{tab:Counter-Stack}所示的矩阵, 第i行第j列表示从第i次访问到第j次访问中的不同地址的个数，利用这个矩阵，通过推导我们就能够计算出每一次访问它的重用距离。但是如果将这整个矩阵存放在内存中，其空间开销会是访存长度的平方。通过降低采样和剪枝，Counter Stack实现了亚线性开销，并且使用采样并没有影响精度。
+
+Shards\supercite{waldspurger2015efficient}降低开销的方式更加直观一些，对于一个访存序列来说，Shards采用对地址进行hash的方式选择性地进行监控，即满足$hash(addr) \; \% \; T \; < \; P$的地址才被记录下来，此时的采样率为$\frac{T}{P}$，因为有了采样，所以实际上得到的重用距离会偏小，Shards通过将实际得到的重用距离除以采样率$\frac{T}{P}$来近似估计真实的重用距离，实验表明这样得到的MRC和真实MRC的误差也非常小。
+
+AET\supercite{aet}跟前面研究计算访问的重用距离的方式不同，它记录的是重用时间，即同一个地址两次访问之间间隔的重用时间，这个重用时间可以用处理器的周期数来度量，AET利用缓存的淘汰时间进行建模，推导出了重用时间分布和MRC之间的量化关系。重用时间的获得比重用距离的获得要更加轻松，只需要hash表保存每个地址的上次访问时间便能够做到，并且每次更新重用时间分布的开销都是$O(1)$。进一步，AET通过采样的方式决定是否要监控访问序列中的某一次访问，不同于Shards对地址做hash，采样的集合是固定的，AET实现的采样是随机采样，每一个访问序列都有概率被监控到。因此AET算法的时间空间开销也都是亚线性的。
+
+
+\subsection{MRC应用}
+MRC刻画了在不同缓存大小下的访存失效率，在分级存储器体系结构中，缓存(cache)、内存、磁盘缓存、甚至磁盘都可以称之为他们下一级存储层的缓存，MRC理论也大量应用在缓存大小的分配以及在共享缓存情况下的缓存划分策略上。
+
+RapidMRC\supercite{tam2009rapidmrc}是一个软件定义的在线方法去刻画进程的缓存需求，他们利用现代商业处理器所提供的体系结构上的支持去计算L2的MRC，并以此来优化L2的共享划分，这个体系结构上的支持用到的是PMU(Performance Monitoring Units)，PMU能够将内存访问的数据地址记录在寄存器里面。为了节省开销，RapidMRC只截获了L1的数据缓存失效(L1 data cache miss)相关的访存地址，并且在PMU将地址写入寄存器时发生中断从而截获这次L2的访问地址，通过截获到的一系列访存序列构建MRC。但是我们的实验发现在虚拟化环境下用中断方式去获得访存序列开销非常严重，因为这还涉及到指令执行权限从虚拟机ring1到宿主机ring0的切换。所以这种方法在虚拟化环境下并不适用。不过我们仍然使用PMU的计数功能去获得我们想要得到的硬件事件数，比如TLB miss和Memory Reference数。
+
+Zhou\supercite{Zhou2004Dynamic}使用了两种方式在运行时动态计算MRC，一种方式是利用模拟器使用辅助硬件截获内存访问地址从而构建MRC，这是一种细粒度的方式；另一种方式是使用修改操作系统的软件方式通过人为制造page fault截获内存访问，为了降低开销对页面进行了分组而不是以页为单位进行计算，所以这种方式是粗粒度的计算方式。但是无论是方法一还是方法二都有局限，方法一需要额外的硬件帮助，方法二只能获得非常粗略的MRC。PATH\supercite{Azimi2007Path}在Zhou的工作之上也是利用硬件辅助提供了更加通用的页面信息，利用PATH提供的信息，LRU栈以及MRC曲线，PATH还实现了更为复杂内存管理策略，包括自适应的页面替换算法，改进的内存分配以及虚拟内存预取策略.CRAMM\supercite{yang2006cramm}同样收集详细的内存访问序列，CRAMM是一个基于LRU直方图的虚拟内存管理器，它保存了每个进程的LRU直方图，经过修改的JVM和CRAMM通信去获得有它自己的工作集大小(WSS)以及操作系统可用的内存，从而调整自己的堆大小，在不造成大量不可接受的主内存失效(major page fault)情况下通过减小堆大小可以有效降低垃圾回收的频率。CRAMM建立了一个JAVA应用程序工作集大小和其堆大小的正相关模型，通过监控工作集大小的变化动态调整堆大小。但是在虚拟化环境下，虚拟机的工作集大小和它被分配到的内存大小没有直接关系，并且CRAMM要求对操作系统的修改，在全虚拟化环境下并不适用。
+
+现在随着redis、memcached等内存型缓存数据库的广泛使用，内存常常作为磁盘的缓存来加速数据库的访问。Moirai\supercite{stefanovici2015software}提供了一个多租户、多工作负载感知的系统帮助提高这类分布式缓存的性能，Moirai能够使分布式缓存的管理更加轻松和合理，提高整体的性能，提供多租户的隔离以及QoS保证。Moirai通过不同租户、不同工作负载的IO访问序列来计算不同负载的MRC，它采用的计算方法是Shards\supercite{waldspurger2015efficient}，根据不同负载的MRC计算出一个最优的缓存分配策略。
+
+Multi-cache\supercite{rajasekaran2016multi}提到在当今多层级存储器架构下，数据中心通常会使用网络存储设备来存储虚拟机的磁盘，但是当不同负载下的虚拟机同时访问网络磁盘时会产生性能上的下降，因为不同的虚拟机访问磁盘的不同位置，可能两个虚拟机的局部性都很好，但是他们交替访问磁盘，那么就会带来额外的磁盘寻道时间，所以现代数据中心会在网络存储层之前，使用SSD或者是NVM作为缓存设备加速磁盘IO的速度。但是这里还有一个问题，如果一个虚拟机上有着很差的数据局部性和很高的随机IO，并且由于它频繁的IO访问导致占据大量的缓存空间，那么别的虚拟机能够使用到的缓存大小就会减小，作者利用各虚拟机磁盘访问序列计算MRC，利用贪心和启发式算法合理地为各个虚拟机划分缓存大小。
+
+总的来说，大量的研究工作已经提出使用MRC去改进分层级存储架构的管理，包括文件缓冲管理\supercite{kim2000low}\supercite{patterson1995informed}\supercite{zhou2001multi}，页面管理\supercite{Azimi2007Path}\supercite{yang2006cramm}\supercite{Zhou2004Dynamic}，L2缓存管理\supercite{qureshi2006utility}\supercite{stone1992optimal}\supercite{suh2004dynamic}\supercite{tam2009rapidmrc}。MRC能够得到在一个特定时间段内一个进程或者是包括一组进程的工作负载亦或是一整个虚拟机的工作负载的失效率和缓存大小的关系。MRC能够帮助我们判断一组进程他的真正的缓存需求。
+
+离线计算MRC相对容易因为不会有那么多的时间和空间限制，在线计算文件系统或者是存储设备的MRC也相对来说容易实现，因为访问地址的截获相对来说更容易实现。但是没有硬件技术的帮助，要实现内存或者是缓存的在线MRC计算难度很大。前面提到的内存缓存相关工作都对开销做了很大程度的优化来取得近似的MRC。
+
+\section{AET模型}
+缓存系统使用的替换算法通常是LRU算法，根据LRU算法，无论缓存是如何组织的，缓存命中或者是缓存失效都会导致缓存块的移动。AET模型和缓存块的平均淘汰时间相关，缓存块在被淘汰之前也许会发生多次重用，而淘汰时间是在缓存块最后一次被访问到至被淘汰的时间。
+
+AET模型基于缓存块移动的概率，假定AET(c)是大小为c的全相连LRU缓存的所有数据淘汰的平均淘汰时间，$T_m$为缓存块移动到位置m的时间，很显然$T_0=0$以及$AET(c)=T_c$。假定rt(d)为重用时间为d的访问次数，n为所有的访问次数，用f(t)表示重用时间为d所占比例，则$f(t)=\frac{t}{n}$。使用P(t)表示重用时间大于或者等于t的比例，那么$P(t) = \sum\nolimits_{x \geq t}f(x)$。缓存块在缓存中是否移动依据于概率P(t)，这是因为如果一个缓存块所在位置为m，那么如果下一个数据的访问它的重用时间超过了$T_m$，即下一个访问的缓存块的位置在该缓存块位于LRU位置的尾部，那么下一个访问就会引起该缓存块的移动。而重用时间超过$T_m$的概率为$P(T_m)$。换言之在m位置的缓存块向LRU尾部的移动速度为$P(T_m)$，想象LRU是条直线道路，所有缓存块从LRU头部走到LRU的尾部，在每一个时刻都对应了一个速度，对每一时刻的速度进行积分就能得到整个LRU长度。
+
+给定一个大小为c的缓存，根据积分公式，如果我们知道了重用时间的分布P(t)我们就能得到失效率曲线，$MRC(c)=P(AET(c))$，因为大小为c的缓存其平均淘汰时间为AET(c)，如果重用时间超过了平均淘汰时间那么这个缓存块就很可能已经被淘汰出缓存了，所以这次重用也就引起了一次缓存失效。换言之如果我们得到了重用时间分布，MRC曲线将很容易通过公式\ref{eq1}计算获得。
+\begin{equation}\label{eq1}
+\int_{0}^{AET(c)}v(t)dt=\int_{0}^{AET(c)}P(t)dt=c
+\end{equation}
+% vim:ts=4:sw=4
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
